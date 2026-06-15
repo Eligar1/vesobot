@@ -5,7 +5,7 @@
 ## Установка
 
 ```powershell
-cd D:\botstg\vesobot
+cd x:\xxx\vesobot
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
