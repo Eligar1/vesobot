@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
@@ -57,6 +57,12 @@ class Storage:
                 );
                 """
             )
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(users)").fetchall()
+            }
+            if "target_weight_kg" not in columns:
+                conn.execute("ALTER TABLE users ADD COLUMN target_weight_kg REAL")
 
     def upsert_user(
         self,
@@ -120,6 +126,13 @@ class Storage:
                 (user_id, now.isoformat(), amount_ml),
             )
 
+    def set_target_weight(self, user_id: int, target_weight_kg: float | None) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE users SET target_weight_kg = ? WHERE user_id = ?",
+                (target_weight_kg, user_id),
+            )
+
     def all_weights(self, user_id: int | None = None) -> list[sqlite3.Row]:
         query = "SELECT * FROM weights"
         params: tuple[int, ...] = ()
@@ -154,6 +167,42 @@ class Storage:
             ).fetchone()
             return int(row["total"])
 
+    def water_total_between(self, user_id: int, start: datetime, end: datetime) -> int:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COALESCE(SUM(amount_ml), 0) AS total
+                FROM water_logs
+                WHERE user_id = ? AND logged_at >= ? AND logged_at < ?
+                """,
+                (user_id, start.isoformat(), end.isoformat()),
+            ).fetchone()
+            return int(row["total"])
+
+    def weight_stats_between(self, user_id: int, start: datetime, end: datetime) -> sqlite3.Row:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT
+                    AVG(weight_kg) AS average,
+                    MIN(weight_kg) AS minimum,
+                    MAX(weight_kg) AS maximum,
+                    COUNT(*) AS count
+                FROM weights
+                WHERE user_id = ? AND measured_at >= ? AND measured_at < ?
+                """,
+                (user_id, start.isoformat(), end.isoformat()),
+            ).fetchone()
+
+    def average_weight_since(self, user_id: int, now: datetime, days: int) -> float | None:
+        start = now - timedelta(days=days)
+        row = self.weight_stats_between(user_id, start, now)
+        return round(float(row["average"]), 2) if row["average"] is not None else None
+
+    def average_weight_between(self, user_id: int, start: datetime, end: datetime) -> float | None:
+        row = self.weight_stats_between(user_id, start, end)
+        return round(float(row["average"]), 2) if row["average"] is not None else None
+
     def latest_weights(self, user_id: int, limit: int = 2) -> list[sqlite3.Row]:
         with self.connect() as conn:
             return conn.execute(
@@ -166,3 +215,59 @@ class Storage:
                 (user_id, limit),
             ).fetchall()
 
+    def first_weight_between(self, user_id: int, start: datetime, end: datetime) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT * FROM weights
+                WHERE user_id = ? AND measured_at >= ? AND measured_at < ?
+                ORDER BY measured_at ASC
+                LIMIT 1
+                """,
+                (user_id, start.isoformat(), end.isoformat()),
+            ).fetchone()
+
+    def last_weight_between(self, user_id: int, start: datetime, end: datetime) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute(
+                """
+                SELECT * FROM weights
+                WHERE user_id = ? AND measured_at >= ? AND measured_at < ?
+                ORDER BY measured_at DESC
+                LIMIT 1
+                """,
+                (user_id, start.isoformat(), end.isoformat()),
+            ).fetchone()
+
+    def undo_last_entry(self, user_id: int) -> tuple[str, float | int, str] | None:
+        with self.connect() as conn:
+            weight = conn.execute(
+                """
+                SELECT id, measured_at AS created_at, weight_kg AS value
+                FROM weights
+                WHERE user_id = ?
+                ORDER BY measured_at DESC
+                LIMIT 1
+                """,
+                (user_id,),
+            ).fetchone()
+            water = conn.execute(
+                """
+                SELECT id, logged_at AS created_at, amount_ml AS value
+                FROM water_logs
+                WHERE user_id = ?
+                ORDER BY logged_at DESC
+                LIMIT 1
+                """,
+                (user_id,),
+            ).fetchone()
+
+            if not weight and not water:
+                return None
+
+            if weight and (not water or weight["created_at"] >= water["created_at"]):
+                conn.execute("DELETE FROM weights WHERE id = ?", (weight["id"],))
+                return ("weight", float(weight["value"]), weight["created_at"])
+
+            conn.execute("DELETE FROM water_logs WHERE id = ?", (water["id"],))
+            return ("water", int(water["value"]), water["created_at"])

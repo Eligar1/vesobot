@@ -60,15 +60,21 @@ def sync_excel(storage: Storage, user_id: int, excel_path: Path, water_norm_ml: 
     first = weights[0]["weight_kg"] if weights else None
     delta = round(latest - first, 2) if latest is not None and first is not None else None
     total_water = sum(int(row["amount_ml"]) for row in water_logs)
+    user = storage.get_user(user_id)
+    target = user["target_weight_kg"] if user and "target_weight_kg" in user.keys() else None
+    avg_7_days = storage.average_weight_since(user_id, datetime.now(), 7)
 
     profile_ws.append(["Последний вес", latest])
+    profile_ws.append(["Цель по весу", target])
+    profile_ws.append(["До цели, кг", round(latest - target, 2) if latest is not None and target is not None else None])
+    profile_ws.append(["Средний вес за 7 дней", avg_7_days])
     profile_ws.append(["Изменение веса от первой записи", delta])
     profile_ws.append(["Всего воды записано, мл", total_water])
     profile_ws.append(["Дневная норма воды, мл", water_norm_ml])
 
     for ws in (weight_ws, water_ws, profile_ws):
         ws.freeze_panes = "A2"
-        ws.column_dimensions["A"].width = 22
+        ws.column_dimensions["A"].width = 28
         ws.column_dimensions["B"].width = 18
 
     weight_ws._charts.clear()
