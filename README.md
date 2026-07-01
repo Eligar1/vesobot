@@ -48,3 +48,13 @@ python bot.py
 Недельный отчет приходит по воскресеньям в 21:05. В нем есть изменение веса за неделю, минимум/максимум, средний вес и средняя вода за день.
 
 Данные хранятся в `data/vesobot.sqlite3`, а Excel обновляется в `veso.xlsx`.
+
+## Сервер
+
+Для переноса на VPS подготовлены:
+
+- `docs/deploy.md` - пошаговый деплой на Ubuntu.
+- `deploy/vesobot.service.example` - пример systemd-сервиса.
+- `scripts/backup_vesobot.py` - безопасный бэкап базы и Excel в zip-архив.
+
+На сервер обязательно перенести `.env`, `data/vesobot.sqlite3` и `veso.xlsx`.

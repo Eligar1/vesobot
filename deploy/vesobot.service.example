@@ -1,0 +1,15 @@
+[Unit]
+Description=Vesobot Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/vesobot
+ExecStart=/opt/vesobot/.venv/bin/python /opt/vesobot/bot.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
