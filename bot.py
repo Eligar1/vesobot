@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
-from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
+from aiogram.types import FSInputFile, KeyboardButton, Message, ReplyKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -31,7 +31,8 @@ main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="Вписать вес"), KeyboardButton(text="Профиль")],
         [KeyboardButton(text="+250 мл"), KeyboardButton(text="+500 мл"), KeyboardButton(text="Вода")],
-        [KeyboardButton(text="Цель"), KeyboardButton(text="Отменить")],
+        [KeyboardButton(text="Цель"), KeyboardButton(text="Таблица Excel")],
+        [KeyboardButton(text="Отменить")],
     ],
     resize_keyboard=True,
 )
@@ -177,6 +178,32 @@ async def send_profile(message: Message) -> None:
     )
 
 
+async def send_excel_table(message: Message) -> None:
+    assert message.from_user is not None
+    try:
+        excel_synced = sync_user_excel(message.from_user.id)
+    except Exception:
+        logging.exception("Failed to refresh Excel file before sending: %s", EXCEL_PATH)
+        await message.answer(
+            "Не смог обновить Excel-файл. Попробуй еще раз чуть позже.",
+            reply_markup=main_keyboard,
+        )
+        return
+
+    if not EXCEL_PATH.exists():
+        await message.answer("Excel-файл пока не создан. Сначала добавь вес или воду.", reply_markup=main_keyboard)
+        return
+
+    caption = "Свежая таблица Excel с твоими данными."
+    if not excel_synced:
+        caption = "Excel сейчас занят, отправляю последнюю сохраненную версию."
+    try:
+        await message.answer_document(FSInputFile(str(EXCEL_PATH), filename=EXCEL_PATH.name), caption=caption, reply_markup=main_keyboard)
+    except Exception:
+        logging.exception("Failed to send Excel file: %s", EXCEL_PATH)
+        await message.answer("Не смог отправить Excel-файл. Попробуй еще раз чуть позже.", reply_markup=main_keyboard)
+
+
 async def record_weight(message: Message, weight: float) -> None:
     assert message.from_user is not None
     if weight < 20 or weight > 400:
@@ -257,7 +284,8 @@ async def cmd_start(message: Message) -> None:
     await message.answer(
         "Готов. Я буду вести вес, воду и обновлять Excel.\n"
         "Вес можно писать как `82.4`. Воду: `вода 300` или `+250 мл`.\n"
-        "Цель: `/goal 75`. Отмена последней записи: `/undo`.",
+        "Цель: `/goal 75`. Отмена последней записи: `/undo`.\n"
+        "Таблицу можно получить командой `/excel`.",
         reply_markup=main_keyboard,
         parse_mode="Markdown",
     )
@@ -315,6 +343,13 @@ async def cmd_weekly(message: Message) -> None:
     await message.answer(weekly_report_text(message.from_user.id, now_local()), reply_markup=main_keyboard)
 
 
+async def cmd_excel(message: Message) -> None:
+    if not await ensure_user(message):
+        return
+    assert message.from_user is not None
+    await send_excel_table(message)
+
+
 async def on_text(message: Message) -> None:
     if not await ensure_user(message):
         return
@@ -342,6 +377,9 @@ async def on_text(message: Message) -> None:
         return
     if text in {"отменить", "undo"}:
         await undo_last(message)
+        return
+    if text in {"таблица excel", "таблица exel", "excel", "exel", "эксель"}:
+        await send_excel_table(message)
         return
 
     state = storage.pop_state(message.from_user.id)
@@ -387,6 +425,7 @@ async def main() -> None:
     dp.message.register(cmd_goal, Command("goal"))
     dp.message.register(cmd_undo, Command("undo"))
     dp.message.register(cmd_weekly, Command("weekly"))
+    dp.message.register(cmd_excel, Command("excel"))
     dp.message.register(on_text, F.text)
 
     scheduler = AsyncIOScheduler(timezone=TIMEZONE_NAME)
